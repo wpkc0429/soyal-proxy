@@ -1,10 +1,12 @@
 # SOYAL Proxy 專案完成說明
 
+wsl -e bash -c "cd /var/www/docker/html/go-lang/soyal-proxy && GOOS=windows GOARCH=amd64 go build -buildvcs=false -o soyal_proxy.exe"
+
 目前已經順利將 SOYAL 門禁系統的取代專案開發並編譯完成。所有的 Go 原始碼以及編譯出來的 Windows 執行檔 (`soyal_proxy.exe`) 皆存放於您的專案目錄：
 `/var/www/docker/html/go-lang/soyal-proxy`
 
 ## 1. 程式特色與實作範圍
-1. **Serial Worker**: 
+1. **Serial Worker**:
    - 透過設定檔中的 COM port 連接 RS-485。
    - **開機自動偵測與型號辨識 (Auto-Discovery)**：程式啟動時會主動發送站號 1~16 的 `12H 00H` (讀取設備參數) 詢問指令。不僅能動態將有回應的站號加入輪詢清單，還能精準解析出該設備的具體型號（例如識別出它是 `AR-881E`、`AR-829Ev5` 或是 `AR-721Ev2` 等），即使不在設定檔中也能賦予它正確的設備名稱。
    - 使用 **Polling 模式**：每秒會定時輪詢所有啟用與自動註冊的設備站號 (Node ID)，發送 `25H` 讀取最新一筆事件，並以 `37H` 刪除該筆已紀錄的事件。
@@ -64,7 +66,7 @@
    soyal_proxy.exe -sync-down-all
    ```
    > 程式會自動向 `config.json` 裡面設定的所有設備讀取會員資料，自動整理合併擁有相同卡號 (`XXXXX:XXXXX`) 的使用者，並在資料夾產生一份綜合的 `global_users.json`。
-   
+
 2. **本機全域編輯 (Global Edit)**：
    用純文字編輯器開啟 `global_users.json`，您可以很直觀的看到「一張卡號對應了哪些設備上的哪些位址 (User Address)」：
    ```json
@@ -72,26 +74,26 @@
      {
        "card_id": "01234:56789",
        "permissions": {
-         "1": { 
+         "1": {
            "user_addr": 15,
            "pin": "1234",
-           "expiry": "2024-12-31" 
+           "expiry": "2024-12-31"
          },
-         "3": { 
-           "floors": [1, 2, 3, 5] 
+         "3": {
+           "floors": [1, 2, 3, 5]
          }
        }
      }
    ]
    ```
-   > **進階設定說明：** 
+   > **進階設定說明：**
    > 您可以在 permissions 的各台機器設定中，額外宣告：
    > 1. `"pin": "1234"` (設定專屬四位數密碼)
    > 2. `"expiry": "2025-10-15"` (設定卡片到期日，若無填寫預設為 2099 年)
    > 3. `"floors": [1, 2, 10]` (針對電梯控制器，直接填寫允許抵達的樓層**陣列**，取代難懂的十六進位)。
    > 4. `"group1"` / `"group2"` / `"zone"` / `"mode"` 等進階選項也能設定，未填時程式將全數以 SOYAL 標準設定（開全區、全大門、純刷卡）自動補齊。
    您可以自由地去增加 Node Permission，只要記得 `user_addr` 不要與其他卡片重複（或直接修改想要的卡號供其他新進員工使用），進階屬性若有需要再參閱 `global_users_format_guide.md` 設定即可。
-   
+
 3. **上傳更新所有設備 (Global Sync Up)**：
    變更完成後，在終端機輸入：
    ```cmd

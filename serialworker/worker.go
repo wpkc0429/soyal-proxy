@@ -94,9 +94,15 @@ func (w *Worker) autoDiscover() {
 		w.port.Write(cmd)
 		// Small delay to allow response in half-duplex RS485
 		time.Sleep(50 * time.Millisecond)
+
+		// Send 09H (Echo Reader Status) as a backup ping for devices that don't support 12H
+		cmdPing := []byte{0x7E, 0x04, i, 0x09}
+		cmdPing = w.calculateChecksum(cmdPing)
+		w.port.Write(cmdPing)
+		time.Sleep(50 * time.Millisecond)
 	}
 	// Wait extra time for the last responses to be parsed by readLoop
-	time.Sleep(500 * time.Millisecond)
+	time.Sleep(800 * time.Millisecond)
 
 	w.mu.RLock()
 	log.Printf("Auto-discovery finished. Total registered devices: %d", len(w.activeNodes))
@@ -281,6 +287,9 @@ func (w *Worker) readLoop() {
 						if isNew || devName == fmt.Sprintf("Auto Node %s", nodeID) {
 							devName = fmt.Sprintf("%s (Node %s)", model, nodeID)
 							isNew = true
+						} else {
+							// If it's already in the config, log its active status anyway
+							log.Printf("✔ Device online: %s (Node %s, Model: %s)", devName, nodeID, model)
 						}
 					}
 

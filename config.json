@@ -1,0 +1,14 @@
+{
+  "serial_port": "COM3",
+  "baud_rate": 9600,
+  "redis_host": "127.0.0.1:6379",
+  "redis_pass": "",
+  "redis_topic": "soyal_events",
+  "devices": {
+    "1": "大門前門",
+    "2": "大門後門",
+    "3": "電梯",
+    "4": "車庫etag",
+    "5": "車庫刷卡"
+  }
+}

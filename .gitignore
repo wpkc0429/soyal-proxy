@@ -1,0 +1,40 @@
+# 執行檔 (Windows 為 .exe)
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# 專案編譯出的主程式 (假設你的 output 叫 main 或 app)
+bin/
+out/
+/app
+/server
+
+# 排除 vendor 目錄
+vendor/
+
+# 測試產生的覆蓋率報告
+*.out
+*.test
+*.prof
+cp.out
+coverage.txt
+
+# 專案中可能使用的工具產物
+.air          # Air (Live reload 工具) 的暫存檔
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+
+# JetBrains (GoLand/IntelliJ)
+.idea/
+
+# VS Code
+.vscode/
+# 注意：如果你想跟團隊分享 VS Code 設定（如 launch.json），可以不排除 .vscode
+
+.venv

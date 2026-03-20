@@ -1,0 +1,6 @@
+﻿Collecting pypdf
+  Downloading pypdf-6.9.1-py3-none-any.whl.metadata (7.1 kB)
+Downloading pypdf-6.9.1-py3-none-any.whl (333 kB)
+Installing collected packages: pypdf
+Successfully installed pypdf-6.9.1
+Done

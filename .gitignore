@@ -36,3 +36,4 @@ Thumbs.db
 # 注意：如果你想跟團隊分享 VS Code 設定（如 launch.json），可以不排除 .vscode
 
 .venv
+global_users.json

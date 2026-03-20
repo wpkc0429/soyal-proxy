@@ -87,7 +87,7 @@ func ParseEventLog(data []byte, nodeID string, deviceName string) (*AccessEvent,
 	// 23: Tag ID (Dat19)
 	// 24: Tag ID (Dat20)
 
-	if len(data) < 28 || data[3] != 0x27 {
+	if len(data) < 27 || data[3] != 0x27 {
 		return nil, fmt.Errorf("invalid event log frame")
 	}
 

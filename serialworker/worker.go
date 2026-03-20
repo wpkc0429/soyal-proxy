@@ -3,6 +3,7 @@ package serialworker
 import (
 	"fmt"
 	"log"
+	"strconv"
 	"soyal-proxy/config"
 	"soyal-proxy/parser"
 	"soyal-proxy/publisher"
@@ -104,7 +105,11 @@ func (w *Worker) autoDiscover() {
 
 func (w *Worker) pollEventLog(nodeIDStr string) {
 	var nodeID byte
-	fmt.Sscanf(nodeIDStr, "%d", &nodeID)
+	id, err := strconv.Atoi(nodeIDStr)
+	if err == nil {
+		nodeID = byte(id)
+	}
+
 	// 7E 04 DID 25 XOR SUM
 	cmd := []byte{0x7E, 0x04, nodeID, 0x25}
 	cmd = w.calculateChecksum(cmd)

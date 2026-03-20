@@ -1,6 +1,4 @@
 # 執行檔 (Windows 為 .exe)
-*.exe
-*.exe~
 *.dll
 *.so
 *.dylib

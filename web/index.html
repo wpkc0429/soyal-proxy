@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SOYAL Proxy Management Web UI</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Vue 3 -->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <style>
+        body {
+            background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%);
+            color: #f8fafc;
+            min-height: 100vh;
+        }
+        .glass {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }
+    </style>
+</head>
+<body class="p-6">
+    <div id="app" class="max-w-7xl mx-auto">
+        <!-- Header -->
+        <header class="flex justify-between items-center mb-8 glass rounded-2xl p-6">
+            <div>
+                <h1 class="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-purple-500">
+                    SOYAL 門禁白名單管理中心
+                </h1>
+                <p class="text-gray-400 mt-2">即時同步、編輯與遙控設備權限</p>
+            </div>
+            <div class="flex space-x-4">
+                <button @click="saveAll" class="px-6 py-2 bg-gradient-to-r from-green-500 to-emerald-600 rounded-lg font-semibold hover:opacity-90 transition shadow-lg">
+                    💾 儲存所有變更
+                </button>
+            </div>
+        </header>
+
+        <!-- Remote Control Section -->
+        <section class="mb-8 glass rounded-2xl p-6">
+            <h2 class="text-xl font-bold mb-4 flex items-center"><span class="mr-2">🕹️</span> 設備即時遙控</h2>
+            <div class="flex flex-wrap gap-4">
+                <div v-for="(name, id) in devices" :key="id" class="glass p-4 rounded-xl flex items-center space-x-4">
+                    <div>
+                        <div class="text-sm text-gray-400">Node {{ id }}</div>
+                        <div class="font-bold">{{ name }}</div>
+                    </div>
+                    <div class="flex space-x-2 border-l border-gray-600 pl-4">
+                        <button @click="remoteControl(id, 'open_door')" class="bg-blue-600 hover:bg-blue-500 text-xs px-3 py-1.5 rounded transition">遙控開門</button>
+                        <button @click="remoteControl(id, 'garage_toggle')" class="bg-indigo-600 hover:bg-indigo-500 text-xs px-3 py-1.5 rounded transition">車庫點放</button>
+                        <button @click="remoteControl(id, 'alarm_on')" class="bg-red-600 hover:bg-red-500 text-xs px-3 py-1.5 rounded transition">觸發警報</button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Users Management -->
+        <section class="glass rounded-2xl p-6">
+            <div class="flex justify-between items-center mb-6">
+                <h2 class="text-xl font-bold flex items-center"><span class="mr-2">👥</span> 門禁白名單清單</h2>
+                <button @click="addUser" class="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm transition">
+                    ➕ 新增持卡人
+                </button>
+            </div>
+            
+            <div class="space-y-4">
+                <!-- User Card -->
+                <div v-for="(user, index) in users" :key="index" class="bg-slate-800/50 p-6 rounded-xl border border-slate-700 transition hover:border-slate-500">
+                    <div class="flex justify-between items-start mb-4">
+                        <div class="flex space-x-4 w-full max-w-2xl">
+                            <div class="w-1/3">
+                                <label class="block text-xs text-gray-400 mb-1">卡號 (Card ID)</label>
+                                <input v-model="user.card_id" class="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500" placeholder="00000:00000">
+                            </div>
+                            <div class="w-2/3">
+                                <label class="block text-xs text-gray-400 mb-1">備註 / 姓名 (Notes)</label>
+                                <input v-model="user.notes" class="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500" placeholder="姓名或部門">
+                            </div>
+                        </div>
+                        <button @click="users.splice(index, 1)" class="text-red-400 hover:text-red-300 text-sm">🗑️ 刪除卡號</button>
+                    </div>
+
+                    <!-- Device Permissions -->
+                    <div class="mt-4 border-t border-slate-700 pt-4">
+                        <div class="flex justify-between items-center mb-3">
+                            <h3 class="text-sm font-semibold text-gray-300">設備權限設定</h3>
+                            <div class="flex space-x-2">
+                                <select v-model="newNode[index]" class="bg-slate-900 border border-slate-600 rounded text-xs px-2 py-1">
+                                    <option value="" disabled>選擇設備新增權限</option>
+                                    <option v-for="(name, id) in devices" :value="id" :disabled="user.permissions && user.permissions[id]">{{ name }} (Node {{id}})</option>
+                                </select>
+                                <button @click="addPermission(index)" class="bg-slate-700 hover:bg-slate-600 px-3 py-1 rounded text-xs">新增</button>
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                            <div v-for="(perm, nodeId) in user.permissions" :key="nodeId" class="glass p-4 rounded-lg relative">
+                                <button @click="delete user.permissions[nodeId]" class="absolute top-2 right-2 text-gray-500 hover:text-red-400">✕</button>
+                                <div class="font-bold text-sm text-blue-400 mb-3">{{ devices[nodeId] || 'Node '+nodeId }} <span class="text-gray-500 text-xs">(Node {{nodeId}})</span></div>
+                                
+                                <div class="grid grid-cols-2 gap-3">
+                                    <div>
+                                        <label class="block text-xs text-gray-400">User Addr (省略自動配發)</label>
+                                        <input type="number" v-model.number="perm.user_addr" class="w-full bg-slate-900 border border-slate-600 rounded px-2 py-1 text-xs mt-1" placeholder="Auto">
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs text-gray-400">PIN 碼</label>
+                                        <input type="text" v-model="perm.pin" class="w-full bg-slate-900 border border-slate-600 rounded px-2 py-1 text-xs mt-1" placeholder="無">
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs text-gray-400">通行模式</label>
+                                        <select v-model="perm.mode" class="w-full bg-slate-900 border border-slate-600 rounded px-2 py-1 text-xs mt-1">
+                                            <option value="">預設純刷卡</option>
+                                            <option value="card">純刷卡 (Card)</option>
+                                            <option value="card_or_pin">卡或密碼 (Card OR PIN)</option>
+                                            <option value="card_and_pin">卡加密碼 (Card & PIN)</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs text-gray-400">到期日</label>
+                                        <input type="date" v-model="perm.expiry" class="w-full bg-slate-900 border border-slate-600 rounded px-2 py-1 text-xs mt-1" placeholder="YYYY-MM-DD">
+                                    </div>
+                                    <div class="col-span-2">
+                                        <label class="block text-xs text-gray-400">允許大門陣列 (例: 1, 2, 3)</label>
+                                        <input type="text" :value="perm.doors ? perm.doors.join(', ') : ''" @change="e => updateArray(perm, 'doors', e.target.value)" class="w-full bg-slate-900 border border-slate-600 rounded px-2 py-1 text-xs mt-1" placeholder="留空代表全門開放">
+                                    </div>
+                                    <div class="col-span-2">
+                                        <label class="block text-xs text-gray-400">允許電梯樓層 (例: 1, 2, 10)</label>
+                                        <input type="text" :value="perm.floors ? perm.floors.join(', ') : ''" @change="e => updateArray(perm, 'floors', e.target.value)" class="w-full bg-slate-900 border border-slate-600 rounded px-2 py-1 text-xs mt-1" placeholder="僅對電梯設備有效">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div v-if="users.length === 0" class="text-center py-12 text-gray-500">
+                    目前沒有任何持卡人資料，請點擊「新增持卡人」或從終端機執行 sync-down-all。
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <script>
+        const { createApp, ref, onMounted } = Vue;
+
+        createApp({
+            setup() {
+                const users = ref([]);
+                const devices = ref({});
+                const newNode = ref([]);
+
+                const fetchData = async () => {
+                    try {
+                        const [cfgRes, usersRes] = await Promise.all([
+                            fetch('/api/config'),
+                            fetch('/api/users')
+                        ]);
+                        const cfg = await cfgRes.json();
+                        devices.value = cfg.devices || {};
+                        users.value = await usersRes.json();
+                    } catch (e) {
+                        alert("無法讀取資料，請確認後端是否執行中！");
+                    }
+                };
+
+                const saveAll = async () => {
+                    // Clean up empty fields to avoid JSON clutter
+                    users.value.forEach(u => {
+                        for(let nd in u.permissions) {
+                            let p = u.permissions[nd];
+                            if(p.user_addr === '') delete p.user_addr;
+                            if(p.mode === '') delete p.mode;
+                            if(p.pin === '') delete p.pin;
+                            if(p.expiry === '') delete p.expiry;
+                            if(p.doors && p.doors.length === 0) delete p.doors;
+                            if(p.floors && p.floors.length === 0) delete p.floors;
+                        }
+                    });
+
+                    try {
+                        const res = await fetch('/api/users', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify(users.value)
+                        });
+                        if(res.ok) alert("✅ 資料儲存成功！請記得回終端機執行 soyal_proxy.exe -sync-up-all 寫入設備！");
+                        else alert("寫入失敗！");
+                    } catch (e) {
+                        alert("網路連線錯誤！");
+                    }
+                };
+
+                const remoteControl = async (nodeId, action) => {
+                    try {
+                        const res = await fetch('/api/control', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({ node_id: parseInt(nodeId), action })
+                        });
+                        if(!res.ok) alert("發送失敗");
+                    } catch(e) {}
+                };
+
+                const addUser = () => {
+                    users.value.unshift({ card_id: "", notes: "新員工", permissions: {} });
+                };
+
+                const addPermission = (index) => {
+                    const nodeStr = newNode.value[index];
+                    if(nodeStr && !users.value[index].permissions[nodeStr]) {
+                        users.value[index].permissions[nodeStr] = {};
+                        newNode.value[index] = "";
+                    }
+                };
+
+                const updateArray = (perm, key, val) => {
+                    if(!val.trim()) {
+                        delete perm[key];
+                        return;
+                    }
+                    perm[key] = val.split(',').map(v => parseInt(v.trim())).filter(n => !isNaN(n));
+                };
+
+                onMounted(fetchData);
+
+                return { users, devices, newNode, saveAll, remoteControl, addUser, addPermission, updateArray };
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>

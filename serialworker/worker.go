@@ -17,25 +17,35 @@ type Worker struct {
 	cfg         *config.Config
 	publisher   *publisher.RedisPublisher
 	activeNodes map[string]string
+	CommandChan chan publisher.ControlMessage // Channel for priority writes
 	mu          sync.RWMutex
 }
 
-func NewWorker(cfg *config.Config, pub *publisher.RedisPublisher) (*Worker, error) {
+func NewWorker(cfg *config.Config, pub *publisher.RedisPublisher) *Worker {
+	w := &Worker{
+		cfg:         cfg,
+		publisher:   pub,
+		activeNodes: make(map[string]string),
+		CommandChan: make(chan publisher.ControlMessage, 20),
+	}
+
 	mode := &serial.Mode{
 		BaudRate: cfg.BaudRate,
 	}
 	port, err := serial.Open(cfg.SerialPort, mode)
 	if err != nil {
-		return nil, err
+		log.Printf("WARNING: Failed to open serial port %s: %v", cfg.SerialPort, err)
+		log.Println("System is running in OFFLINE mode. Web UI is still accessible.")
+	} else {
+		port.SetReadTimeout(200 * time.Millisecond)
+		w.port = port
 	}
-	port.SetReadTimeout(200 * time.Millisecond)
 
-	return &Worker{
-		port:        port,
-		cfg:         cfg,
-		publisher:   pub,
-		activeNodes: make(map[string]string),
-	}, nil
+	return w
+}
+
+func (w *Worker) IsOnline() bool {
+	return w.port != nil
 }
 
 func (w *Worker) Start() {
@@ -45,6 +55,16 @@ func (w *Worker) Start() {
 		w.activeNodes[id] = name
 	}
 	w.mu.Unlock()
+
+	if w.port == nil {
+		// Offline mode: Drain commands to avoid blocking other systems
+		go func() {
+			for cmd := range w.CommandChan {
+				log.Printf("OFFLINE: Discarded remote command '%s' for Node %d", cmd.Action, cmd.NodeID)
+			}
+		}()
+		return
+	}
 
 	go w.readLoop()
 	w.autoDiscover()
@@ -98,32 +118,71 @@ func (w *Worker) deleteOldestEventLog(nodeID byte) {
 	w.port.Write(cmd)
 }
 
+func (w *Worker) handleControlCommand(cmd publisher.ControlMessage) {
+	nodeID := byte(cmd.NodeID)
+	// Example actions. Default to Door Open (82).
+	var subCmd byte
+	switch cmd.Action {
+	case "open", "open_door":
+		subCmd = 0x82 // Output 2 (Door Relay) Latch/Timer
+	case "close_door":
+		subCmd = 0x83 // Output 2 OFF
+	case "pulse_door", "garage_toggle":
+		subCmd = 0x84 // Output 2 Pulse
+	case "alarm_on":
+		subCmd = 0x80 // Output 1 (Alarm Relay) ON
+	case "alarm_off":
+		subCmd = 0x81 // Output 1 OFF
+	case "pulse_alarm", "garage_stop":
+		subCmd = 0x87 // Output 1 Pulse
+	default:
+		log.Printf("Unknown remote action: %s", cmd.Action)
+		return
+	}
+
+	log.Printf("Executing priority command '%s' (21H %X) on Node %d via Redis", cmd.Action, subCmd, nodeID)
+	pkt := []byte{0x7E, 0x05, nodeID, 0x21, subCmd, 0x00}
+	pkt = w.calculateChecksum(pkt)
+	w.port.Write(pkt)
+	
+	// Wait a bit for the device to ACK before resuming normal polling
+	time.Sleep(100 * time.Millisecond)
+}
+
 func (w *Worker) pollLoop() {
 	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
 
 	idx := 0
-	for range ticker.C {
-		w.mu.RLock()
-		nodeIDs := make([]string, 0, len(w.activeNodes))
-		for id := range w.activeNodes {
-			nodeIDs = append(nodeIDs, id)
-		}
-		w.mu.RUnlock()
+	for {
+		select {
+		case cmd := <-w.CommandChan:
+			// Priority execution of Redis remote control commands
+			w.handleControlCommand(cmd)
 
-		if len(nodeIDs) == 0 {
-			continue // No devices active
-		}
+		case <-ticker.C:
+			// Normal background polling
+			w.mu.RLock()
+			nodeIDs := make([]string, 0, len(w.activeNodes))
+			for id := range w.activeNodes {
+				nodeIDs = append(nodeIDs, id)
+			}
+			w.mu.RUnlock()
 
-		if idx >= len(nodeIDs) {
-			idx = 0
-		}
-		node := nodeIDs[idx]
-		w.pollEventLog(node)
-		idx++
+			if len(nodeIDs) == 0 {
+				continue // No devices active
+			}
 
-		// Wait briefly after polling Event Log to avoid RS485 contention
-		time.Sleep(100 * time.Millisecond)
+			if idx >= len(nodeIDs) {
+				idx = 0
+			}
+			node := nodeIDs[idx]
+			w.pollEventLog(node)
+			idx++
+
+			// Wait briefly after polling Event Log to avoid RS-485 contention
+			time.Sleep(100 * time.Millisecond)
+		}
 	}
 }
 

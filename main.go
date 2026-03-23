@@ -5,14 +5,15 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"runtime"
+
 	"soyal-proxy/api"
 	"soyal-proxy/cli"
 	"soyal-proxy/config"
-	"soyal-proxy/parser"
+	"soyal-proxy/database"
 	"soyal-proxy/publisher"
 	"soyal-proxy/serialworker"
 	"syscall"
-	"time"
 )
 
 func main() {
@@ -40,6 +41,27 @@ func main() {
 	}
 
 	log.Println("Starting SOYAL Proxy...")
+
+	// 修改資料庫路徑策略：由於跨 WSL 執行 Windows EXE 會遭遇 SMB 鎖死 (SQLITE_BUSY)
+	// 若為 Windows 環境，將 events.db 強制寫入至本機 C 槽的 AppData 內以避開 UNC 路徑限制
+	dbDir := "."
+	if runtime.GOOS == "windows" || len(os.Getenv("LOCALAPPDATA")) > 0 {
+		appData := os.Getenv("LOCALAPPDATA")
+		if appData == "" {
+			appData = os.TempDir()
+		}
+		dbDir = appData + "/soyal_proxy"
+		os.MkdirAll(dbDir, 0755)
+	}
+
+	dbPath := dbDir + "/events.db"
+	dsn := dbPath + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
+	
+	log.Printf("Initializing database at: %s", dbPath)
+	err = database.InitDB(dsn, "global_users.json")
+	if err != nil {
+		log.Fatalf("Failed to initialize database: %v", err)
+	}
 
 	pub, err := publisher.NewRedisPublisher(cfg)
 	if err != nil {

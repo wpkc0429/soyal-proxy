@@ -47,7 +47,7 @@ func calculateChecksum(cmd []byte) []byte {
 	return append(cmd, xor, byte(sum&0xFF))
 }
 
-func syncDownNode(port serial.Port, nodeID byte) map[string]GlobalPermission {
+func SyncDownNodePort(port serial.Port, nodeID byte) map[string]GlobalPermission {
 	perms := make(map[string]GlobalPermission)
 	fmt.Printf("Fetching whitelist from Node %d...\n", nodeID)
 
@@ -198,7 +198,7 @@ func SyncDownAll(serialPort string, baudRate int, devices map[string]string) err
 		var nodeID byte
 		fmt.Sscanf(nodeStr, "%d", &nodeID)
 
-		nodePerms := syncDownNode(port, nodeID)
+		nodePerms := SyncDownNodePort(port, nodeID)
 		
 		for cardID, perm := range nodePerms {
 			if globalUsers[cardID] == nil {
@@ -237,7 +237,25 @@ func SyncUpAll(serialPort string, baudRate int, devices map[string]string) error
 	if err := json.Unmarshal(data, &userList); err != nil {
 		return fmt.Errorf("invalid json: %v", err)
 	}
+	
+	devicesList := make([]string, 0, len(devices))
+	for d := range devices {
+		devicesList = append(devicesList, d)
+	}
 
+	mode := &serial.Mode{BaudRate: baudRate}
+	port, err := serial.Open(serialPort, mode)
+	if err != nil {
+		return fmt.Errorf("failed to open serial port: %v", err)
+	}
+	defer port.Close()
+	port.SetReadTimeout(2 * time.Second)
+
+	_, err = SyncUpUsersPort(port, devicesList, userList, filename)
+	return err
+}
+
+func SyncUpUsersPort(port serial.Port, devices []string, userList []GlobalUser, filename string) ([]GlobalUser, error) {
 	// 1. First pass: Build a map of used addresses for each node
 	usedAddrs := make(map[string]map[int]bool)
 	for i := range userList {
@@ -272,23 +290,15 @@ func SyncUpAll(serialPort string, baudRate int, devices map[string]string) error
 		}
 	}
 
-	// 3. Save auto-assigned addresses back to JSON so user knows their slots
-	if rewritten {
+	// 3. Save auto-assigned addresses back if filename is provided
+	if rewritten && filename != "" {
 		updatedData, _ := json.MarshalIndent(userList, "", "  ")
 		os.WriteFile(filename, updatedData, 0644)
 		fmt.Println("Saved newly assigned addresses to global_users.json")
 	}
 
-	mode := &serial.Mode{BaudRate: baudRate}
-	port, err := serial.Open(serialPort, mode)
-	if err != nil {
-		return fmt.Errorf("failed to open serial port: %v", err)
-	}
-	defer port.Close()
-	port.SetReadTimeout(2 * time.Second)
-
 	// Group operations by Node to minimize switching
-	for nodeStr := range devices {
+	for _, nodeStr := range devices {
 		var nodeID byte
 		fmt.Sscanf(nodeStr, "%d", &nodeID)
 		fmt.Printf("Writing to Node %s...\n", nodeStr)
@@ -368,6 +378,7 @@ func SyncUpAll(serialPort string, baudRate int, devices map[string]string) error
 			recBytes[1] = byte((actualAddr >> 8) & 0xFF)
 
 			var siteCode, cardCode uint32
+			var err error
 			_, err = fmt.Sscanf(u.CardID, "%d:%d", &siteCode, &cardCode)
 			if err == nil {
 				recBytes[6] = byte((siteCode >> 8) & 0xFF)
@@ -420,5 +431,5 @@ func SyncUpAll(serialPort string, baudRate int, devices map[string]string) error
 	}
 
 	fmt.Println("Global Sync UP completed successfully.")
-	return nil
+	return userList, nil
 }

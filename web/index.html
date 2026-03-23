@@ -33,6 +33,15 @@
                 <p class="text-gray-400 mt-2">即時同步、編輯與遙控設備權限</p>
             </div>
             <div class="flex space-x-4">
+                <button @click="syncDown" class="px-4 py-2 bg-slate-800 text-blue-300 border border-slate-700 hover:border-blue-500 rounded-lg font-semibold transition shadow flex items-center">
+                    ⬆️ 從設備讀回名單
+                </button>
+                <button @click="syncUp" class="px-4 py-2 bg-slate-800 text-purple-300 border border-slate-700 hover:border-purple-500 rounded-lg font-semibold transition shadow flex items-center">
+                    ⬇️ 寫入至所有設備
+                </button>
+                <button @click="showLogs = true; fetchDbLogs()" class="px-4 py-2 ml-4 bg-slate-800 text-blue-300 border border-slate-700 hover:border-blue-500 rounded-lg font-semibold transition shadow flex items-center">
+                    📂 歷史軌跡庫
+                </button>
                 <button @click="saveAll" class="px-6 py-2 bg-gradient-to-r from-green-500 to-emerald-600 rounded-lg font-semibold hover:opacity-90 transition shadow-lg">
                     💾 儲存所有變更
                 </button>
@@ -195,6 +204,43 @@
                 </div>
             </div>
         </section>
+
+        <!-- History Logs Modal -->
+        <div v-if="showLogs" class="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-6 backdrop-blur-sm transition-opacity">
+            <div class="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
+                <div class="p-4 border-b border-slate-700 flex justify-between items-center bg-slate-800">
+                    <h3 class="text-xl font-bold flex items-center">📂 資料庫永久軌跡紀錄 (Top 200)</h3>
+                    <div class="flex items-center space-x-4">
+                        <button @click="fetchDbLogs" class="text-slate-400 hover:text-white transition bg-slate-700 px-3 py-1 rounded text-sm">🔄 重新整理</button>
+                        <button @click="showLogs = false" class="text-slate-400 hover:text-white transition text-3xl leading-none">&times;</button>
+                    </div>
+                </div>
+                <!-- logs container -->
+                <div class="p-0 overflow-y-auto flex-grow">
+                    <table class="w-full text-left text-sm text-gray-400">
+                        <thead class="text-xs uppercase bg-slate-800 text-gray-300 sticky top-0 shadow">
+                            <tr>
+                                <th class="px-6 py-4">時間</th>
+                                <th class="px-6 py-4">設備</th>
+                                <th class="px-6 py-4">卡號</th>
+                                <th class="px-6 py-4">事件內容</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr v-for="log in dbLogs" :key="log.ID" class="border-b border-slate-800/50 hover:bg-slate-800 transition">
+                                <td class="px-6 py-3 whitespace-nowrap">{{ new Date(log.Time).toLocaleString() }}</td>
+                                <td class="px-6 py-3 text-blue-400 font-semibold">{{ log.DeviceName }}</td>
+                                <td class="px-6 py-3 font-mono text-gray-300">{{ log.CardID }}</td>
+                                <td class="px-6 py-3" :class="{'text-green-400': log.EventCode===11, 'text-red-400 font-bold': log.EventCode!==11}">{{ log.EventDesc }}</td>
+                            </tr>
+                            <tr v-if="!dbLogs || dbLogs.length === 0">
+                                <td colspan="4" class="text-center py-12 text-gray-500">尚無任何歷史紀錄存入資料庫中。</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -207,6 +253,15 @@
                 const liveEvents = ref([]);
                 const deviceStatus = ref({});
                 const searchQuery = ref('');
+                const showLogs = ref(false);
+                const dbLogs = ref([]);
+
+                const fetchDbLogs = async () => {
+                    try {
+                        const res = await fetch('/api/logs');
+                        dbLogs.value = await res.json();
+                    } catch(e) {}
+                };
 
                 const filteredUsers = Vue.computed(() => {
                     if (!searchQuery.value) return users.value;
@@ -325,6 +380,22 @@
                     } catch(e) {}
                 };
 
+                const syncDown = async () => {
+                    if(!confirm("⚠️ 警告：這將會從所有讀卡機實體中讀出名單，並嘗試覆寫回本地資料庫中。\n在同步期間 (約需等待幾十秒)，背景即時事件監聽會暫停。\n確定要繼續嗎？")) return;
+                    try {
+                        await fetch('/api/sync-down', { method: 'POST' });
+                        alert("已在背景啟動【⬇️ 下載實體名單 (Sync-Down)】任務！\n請耐心等待大概 30 秒鐘，接著手動重新整理網頁查看新名單。");
+                    } catch(e) {}
+                };
+
+                const syncUp = async () => {
+                    if(!confirm("⚠️ 警告：這將會把目前本地資料庫中的名單，「強迫派發且覆寫」進所有的實體讀卡機記憶體裡！\n在同步期間，背景即時事件監聽會暫停。\n這個動作建議在儲存所有變更後執行。\n確定要繼續嗎？")) return;
+                    try {
+                        await fetch('/api/sync-up', { method: 'POST' });
+                        alert("已在背景啟動【⬆️ 推播至讀卡機 (Sync-Up)】任務！\n請密切注意實體讀卡機或是後端日誌直到同步完成。");
+                    } catch(e) {}
+                };
+
                 const addUser = () => {
                     searchQuery.value = ''; // Reset search focus newly added
                     const defaultPerms = {};
@@ -415,7 +486,8 @@
 
                 return { 
                     users, devices, searchQuery, filteredUsers, toggleExpand, deleteUser, formatCardId, userExists, addFromEvent,
-                    liveEvents, isOnline, saveAll, remoteControl, addUser, grantAllPermissions, addPermission, updateArray 
+                    liveEvents, isOnline, saveAll, remoteControl, addUser, grantAllPermissions, addPermission, updateArray,
+                    showLogs, dbLogs, fetchDbLogs, syncDown, syncUp
                 };
             }
         }).mount('#app');

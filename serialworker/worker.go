@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	
 	"soyal-proxy/config"
+	"soyal-proxy/database"
 	"soyal-proxy/parser"
 	"soyal-proxy/publisher"
 	"sync"
@@ -98,6 +100,17 @@ func (w *Worker) recordEventHistory(evt *parser.AccessEvent) {
 	if len(w.EventHistory) > 100 {
 		w.EventHistory = w.EventHistory[1:] // keep last 100
 	}
+
+	// Persist to DB asynchronously to avoid blocking RS485 stream
+	go func(e *parser.AccessEvent) {
+		database.DB.Create(&database.AccessLog{
+			Time:       e.Time,
+			DeviceName: e.DeviceName,
+			CardID:     e.CardID,
+			EventCode:  e.EventCode,
+			EventDesc:  e.EventDesc,
+		})
+	}(evt)
 }
 
 func (w *Worker) Start() {

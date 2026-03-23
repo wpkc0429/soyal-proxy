@@ -1,0 +1,38 @@
+?   	soyal-proxy	[no test files]
+?   	soyal-proxy/api	[no test files]
+?   	soyal-proxy/cli	[no test files]
+?   	soyal-proxy/config	[no test files]
+?   	soyal-proxy/publisher	[no test files]
+?   	soyal-proxy/serialworker	[no test files]
+=== RUN   TestVerifyChecksum
+=== RUN   TestVerifyChecksum/Valid_short_frame
+=== RUN   TestVerifyChecksum/Invalid_checksum_sum
+=== RUN   TestVerifyChecksum/Invalid_checksum_xor
+=== RUN   TestVerifyChecksum/Too_short
+=== RUN   TestVerifyChecksum/Length_mismatch
+=== RUN   TestVerifyChecksum/Invalid_header
+--- PASS: TestVerifyChecksum (0.00s)
+    --- PASS: TestVerifyChecksum/Valid_short_frame (0.00s)
+    --- PASS: TestVerifyChecksum/Invalid_checksum_sum (0.00s)
+    --- PASS: TestVerifyChecksum/Invalid_checksum_xor (0.00s)
+    --- PASS: TestVerifyChecksum/Too_short (0.00s)
+    --- PASS: TestVerifyChecksum/Length_mismatch (0.00s)
+    --- PASS: TestVerifyChecksum/Invalid_header (0.00s)
+=== RUN   TestGetEventDescription
+=== RUN   TestGetEventDescription/Normal_Access_by_tag
+=== RUN   TestGetEventDescription/Invalid_card
+=== RUN   TestGetEventDescription/Alarm_event
+=== RUN   TestGetEventDescription/Event_Code:_99
+--- PASS: TestGetEventDescription (0.00s)
+    --- PASS: TestGetEventDescription/Normal_Access_by_tag (0.00s)
+    --- PASS: TestGetEventDescription/Invalid_card (0.00s)
+    --- PASS: TestGetEventDescription/Alarm_event (0.00s)
+    --- PASS: TestGetEventDescription/Event_Code:_99 (0.00s)
+=== RUN   TestParseEventLog_Valid
+--- PASS: TestParseEventLog_Valid (0.00s)
+=== RUN   TestParseEventLog_UserAddrFallback
+--- PASS: TestParseEventLog_UserAddrFallback (0.00s)
+=== RUN   TestParseEventLog_Invalid
+--- PASS: TestParseEventLog_Invalid (0.00s)
+PASS
+ok  	soyal-proxy/parser	0.002s

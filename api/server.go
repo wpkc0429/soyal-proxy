@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -27,6 +28,9 @@ func StartServer(worker *serialworker.Worker, cfg *config.Config) {
 	http.HandleFunc("/api/sync-down", s.handleSyncDown)
 	http.HandleFunc("/api/sync-up", s.handleSyncUp)
 	http.HandleFunc("/api/control", s.handleControl)
+	http.HandleFunc("/api/events", s.handleEvents)
+	http.HandleFunc("/api/history", s.handleHistory)
+	http.HandleFunc("/api/status", s.handleStatus)
 
 	go http.ListenAndServe(":8080", nil)
 }
@@ -122,4 +126,44 @@ func (s *Server) handleControl(w http.ResponseWriter, r *http.Request) {
 	s.worker.CommandChan <- cmd
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"status":"success"}`))
+}
+
+func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming unsupported!", http.StatusInternalServerError)
+		return
+	}
+
+	ch := s.worker.SubscribeEvents()
+	defer s.worker.UnsubscribeEvents(ch)
+
+	for {
+		select {
+		case evt := <-ch:
+			b, err := json.Marshal(evt)
+			if err == nil {
+				fmt.Fprintf(w, "data: %s\n\n", string(b))
+				flusher.Flush()
+			}
+		case <-r.Context().Done():
+			return
+		}
+	}
+}
+
+func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	history := s.worker.GetEventHistory()
+	json.NewEncoder(w).Encode(history)
+}
+
+func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	status := s.worker.GetNodeStatus()
+	json.NewEncoder(w).Encode(status)
 }

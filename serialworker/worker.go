@@ -18,8 +18,11 @@ type Worker struct {
 	cfg         *config.Config
 	publisher   *publisher.RedisPublisher
 	activeNodes map[string]string
-	CommandChan chan publisher.ControlMessage // Channel for priority writes
-	mu          sync.RWMutex
+	CommandChan      chan publisher.ControlMessage // Channel for priority writes
+	mu               sync.RWMutex
+	eventSubscribers []chan *parser.AccessEvent
+	EventHistory     []*parser.AccessEvent
+	LastSeen         map[string]time.Time
 }
 
 func NewWorker(cfg *config.Config, pub *publisher.RedisPublisher) *Worker {
@@ -28,6 +31,7 @@ func NewWorker(cfg *config.Config, pub *publisher.RedisPublisher) *Worker {
 		publisher:   pub,
 		activeNodes: make(map[string]string),
 		CommandChan: make(chan publisher.ControlMessage, 20),
+		LastSeen:    make(map[string]time.Time),
 	}
 
 	mode := &serial.Mode{
@@ -36,7 +40,7 @@ func NewWorker(cfg *config.Config, pub *publisher.RedisPublisher) *Worker {
 	port, err := serial.Open(cfg.SerialPort, mode)
 	if err != nil {
 		log.Printf("WARNING: Failed to open serial port %s: %v", cfg.SerialPort, err)
-		log.Println("System is running in OFFLINE mode. Web UI is still accessible.")
+		log.Println("System is running in OFFLINE mode. Will attempt to auto-reconnect in the background.")
 	} else {
 		port.SetReadTimeout(200 * time.Millisecond)
 		w.port = port
@@ -49,6 +53,53 @@ func (w *Worker) IsOnline() bool {
 	return w.port != nil
 }
 
+func (w *Worker) SubscribeEvents() chan *parser.AccessEvent {
+	ch := make(chan *parser.AccessEvent, 10)
+	w.mu.Lock()
+	w.eventSubscribers = append(w.eventSubscribers, ch)
+	w.mu.Unlock()
+	return ch
+}
+
+func (w *Worker) UnsubscribeEvents(ch chan *parser.AccessEvent) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for i, sub := range w.eventSubscribers {
+		if sub == ch {
+			w.eventSubscribers = append(w.eventSubscribers[:i], w.eventSubscribers[i+1:]...)
+			close(ch)
+			break
+		}
+	}
+}
+
+func (w *Worker) GetEventHistory() []*parser.AccessEvent {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	cp := make([]*parser.AccessEvent, len(w.EventHistory))
+	copy(cp, w.EventHistory)
+	return cp
+}
+
+func (w *Worker) GetNodeStatus() map[string]time.Time {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	cp := make(map[string]time.Time)
+	for k, v := range w.LastSeen {
+		cp[k] = v
+	}
+	return cp
+}
+
+func (w *Worker) recordEventHistory(evt *parser.AccessEvent) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.EventHistory = append(w.EventHistory, evt)
+	if len(w.EventHistory) > 100 {
+		w.EventHistory = w.EventHistory[1:] // keep last 100
+	}
+}
+
 func (w *Worker) Start() {
 	// Pre-load devices from config
 	w.mu.Lock()
@@ -57,19 +108,48 @@ func (w *Worker) Start() {
 	}
 	w.mu.Unlock()
 
-	if w.port == nil {
-		// Offline mode: Drain commands to avoid blocking other systems
-		go func() {
-			for cmd := range w.CommandChan {
-				log.Printf("OFFLINE: Discarded remote command '%s' for Node %d", cmd.Action, cmd.NodeID)
-			}
-		}()
-		return
+	// Launch background loops. They will pause if w.port is nil.
+	go w.readLoop()
+	go w.pollLoop()
+
+	if w.port != nil {
+		// If started online, do an initial autodiscover
+		go w.autoDiscover()
 	}
 
-	go w.readLoop()
-	w.autoDiscover()
-	go w.pollLoop()
+	// Always launch the connection monitor
+	go w.monitorConnection()
+}
+
+func (w *Worker) monitorConnection() {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	mode := &serial.Mode{
+		BaudRate: w.cfg.BaudRate,
+	}
+
+	for range ticker.C {
+		w.mu.RLock()
+		isOffline := (w.port == nil)
+		w.mu.RUnlock()
+
+		if isOffline {
+			port, err := serial.Open(w.cfg.SerialPort, mode)
+			if err == nil {
+				port.SetReadTimeout(200 * time.Millisecond)
+				
+				w.mu.Lock()
+				w.port = port
+				w.mu.Unlock()
+				
+				log.Println("✅ SYSTEM RECONNECTED: Serial port is now online.")
+				
+				// Re-run auto discover when reconnected
+				go w.autoDiscover()
+			}
+		}
+	}
 }
 
 func (w *Worker) calculateChecksum(cmd []byte) []byte {
@@ -86,19 +166,26 @@ func (w *Worker) calculateChecksum(cmd []byte) []byte {
 }
 
 func (w *Worker) autoDiscover() {
+	w.mu.RLock()
+	port := w.port
+	w.mu.RUnlock()
+	if port == nil {
+		return
+	}
+
 	log.Println("Starting auto-discovery of devices (Scanning Nodes 1-16 for models)...")
 	for i := byte(1); i <= 16; i++ {
 		// Send 12H 00H (Read controller's parameters) to get Device Model
 		cmd := []byte{0x7E, 0x05, i, 0x12, 0x00}
 		cmd = w.calculateChecksum(cmd)
-		w.port.Write(cmd)
+		port.Write(cmd)
 		// Small delay to allow response in half-duplex RS485
 		time.Sleep(50 * time.Millisecond)
 
 		// Send 09H (Echo Reader Status) as a backup ping for devices that don't support 12H
 		cmdPing := []byte{0x7E, 0x04, i, 0x09}
 		cmdPing = w.calculateChecksum(cmdPing)
-		w.port.Write(cmdPing)
+		port.Write(cmdPing)
 		time.Sleep(50 * time.Millisecond)
 	}
 	// Wait extra time for the last responses to be parsed by readLoop
@@ -119,14 +206,26 @@ func (w *Worker) pollEventLog(nodeIDStr string) {
 	// 7E 04 DID 25 XOR SUM
 	cmd := []byte{0x7E, 0x04, nodeID, 0x25}
 	cmd = w.calculateChecksum(cmd)
-	w.port.Write(cmd)
+	
+	w.mu.RLock()
+	port := w.port
+	w.mu.RUnlock()
+	if port != nil {
+		port.Write(cmd)
+	}
 }
 
 func (w *Worker) deleteOldestEventLog(nodeID byte) {
 	// 7E 04 DID 37 XOR SUM
 	cmd := []byte{0x7E, 0x04, nodeID, 0x37}
 	cmd = w.calculateChecksum(cmd)
-	w.port.Write(cmd)
+	
+	w.mu.RLock()
+	port := w.port
+	w.mu.RUnlock()
+	if port != nil {
+		port.Write(cmd)
+	}
 }
 
 func (w *Worker) handleControlCommand(cmd publisher.ControlMessage) {
@@ -151,10 +250,19 @@ func (w *Worker) handleControlCommand(cmd publisher.ControlMessage) {
 		return
 	}
 
+	w.mu.RLock()
+	port := w.port
+	w.mu.RUnlock()
+
+	if port == nil {
+		log.Printf("OFFLINE: Discarded priority command '%s' for Node %d", cmd.Action, nodeID)
+		return
+	}
+
 	log.Printf("Executing priority command '%s' (21H %X) on Node %d via Redis", cmd.Action, subCmd, nodeID)
 	pkt := []byte{0x7E, 0x05, nodeID, 0x21, subCmd, 0x00}
 	pkt = w.calculateChecksum(pkt)
-	w.port.Write(pkt)
+	port.Write(pkt)
 	
 	// Wait a bit for the device to ACK before resuming normal polling
 	time.Sleep(100 * time.Millisecond)
@@ -173,6 +281,14 @@ func (w *Worker) pollLoop() {
 
 		case <-ticker.C:
 			// Normal background polling
+			w.mu.RLock()
+			port := w.port
+			w.mu.RUnlock()
+
+			if port == nil {
+				continue
+			}
+
 			w.mu.RLock()
 			nodeIDs := make([]string, 0, len(w.activeNodes))
 			for id := range w.activeNodes {
@@ -202,9 +318,24 @@ func (w *Worker) readLoop() {
 	var frame []byte
 
 	for {
-		n, err := w.port.Read(buf)
+		w.mu.RLock()
+		port := w.port
+		w.mu.RUnlock()
+
+		if port == nil {
+			time.Sleep(1 * time.Second)
+			continue
+		}
+
+		n, err := port.Read(buf)
 		if err != nil {
-			log.Printf("Serial read error: %v", err)
+			log.Printf("⚠️ Serial read error! Port disconnected? Error: %v", err)
+			w.mu.Lock()
+			if w.port != nil {
+				w.port.Close()
+				w.port = nil
+			}
+			w.mu.Unlock()
 			time.Sleep(1 * time.Second)
 			continue
 		}
@@ -252,6 +383,10 @@ func (w *Worker) readLoop() {
 				}
 
 				if nodeID != "" {
+					w.mu.Lock()
+					w.LastSeen[nodeID] = time.Now()
+					w.mu.Unlock()
+
 					w.mu.RLock()
 					devName := w.activeNodes[nodeID]
 					w.mu.RUnlock()
@@ -307,6 +442,17 @@ func (w *Worker) readLoop() {
 						if err == nil {
 							log.Printf("Event received: %+v\n", evt)
 							w.publisher.Publish(evt)
+							
+							w.recordEventHistory(evt)
+
+							w.mu.RLock()
+							for _, sub := range w.eventSubscribers {
+								select {
+								case sub <- evt:
+								default:
+								}
+							}
+							w.mu.RUnlock()
 							
 							// Acknowledge by deleting event log
 							w.deleteOldestEventLog(sourceDID)

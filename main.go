@@ -8,9 +8,11 @@ import (
 	"soyal-proxy/api"
 	"soyal-proxy/cli"
 	"soyal-proxy/config"
+	"soyal-proxy/parser"
 	"soyal-proxy/publisher"
 	"soyal-proxy/serialworker"
 	"syscall"
+	"time"
 )
 
 func main() {
@@ -49,6 +51,15 @@ func main() {
 	if worker.IsOnline() {
 		log.Println("Serial Worker initialized. Connected to", cfg.SerialPort)
 	}
+
+	// === 新增測試用的假刷卡資料 ===
+	// worker.EventHistory = append(worker.EventHistory,
+	// 	&parser.AccessEvent{DeviceName: "大門讀卡機", CardID: "12345:67890", Time: time.Now().Add(-15 * time.Minute), EventCode: 11, EventDesc: "Normal Access by tag"},
+	// 	&parser.AccessEvent{DeviceName: "地下室車道", CardID: "00111:22222", Time: time.Now().Add(-5 * time.Minute), EventCode: 3, EventDesc: "Invalid card"},
+	// 	&parser.AccessEvent{DeviceName: "資訊機房", CardID: "00000:00000", Time: time.Now().Add(-1 * time.Minute), EventCode: 17, EventDesc: "Alarm event"},
+	// 	&parser.AccessEvent{DeviceName: "大門讀卡機", CardID: "00555:00001", Time: time.Now(), EventCode: 11, EventDesc: "Normal Access by tag"},
+	// )
+
 	worker.Start()
 
 	// Start Redis Subscriber to listen for remote control commands

@@ -45,6 +45,14 @@ func TestVerifyChecksum(t *testing.T) {
 			data: []byte{0x7F, 0x05, 0x01, 0x12, 0x00, 0xEC, 0xFF},
 			expected: false,
 		},
+		{
+			name: "Exact minimum boundary (6 bytes)",
+			// 7E 04 01 02 FC FF
+			// XOR = FF ^ 01 ^ 02 = FC
+			// SUM = 01 + 02 + FC = FF
+			data: []byte{0x7E, 0x04, 0x01, 0x02, 0xFC, 0xFF},
+			expected: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -169,5 +177,18 @@ func TestParseEventLog_Invalid(t *testing.T) {
 	_, err = ParseEventLog(shortData, "1", "Device")
 	if err == nil {
 		t.Error("Expected error for too short data, got nil")
+	}
+
+	// Boundary condition: Just enough for header and date, but shorter than 25 length (so missing tag)
+	// Code says "if len(data) > 24" for tag ID. Let's make it exactly 24 bytes long.
+	exact24 := make([]byte, 24)
+	exact24[0] = 0x7E 
+	exact24[1] = 0x16 
+	exact24[3] = 0x27
+	exact24[15] = 11 // Event code
+	
+	_, err = ParseEventLog(exact24, "1", "Device")
+	if err == nil {
+		t.Errorf("Expected error for log short of 27 bytes, got nil")
 	}
 }

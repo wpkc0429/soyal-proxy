@@ -5,6 +5,7 @@ import (
 	"log"
 	"strconv"
 	
+	"soyal-proxy/cli"
 	"soyal-proxy/config"
 	"soyal-proxy/database"
 	"soyal-proxy/parser"
@@ -124,6 +125,23 @@ func (w *Worker) Start() {
 	// Launch background loops. They will pause if w.port is nil.
 	go w.readLoop()
 	go w.pollLoop()
+
+	// Auto Time-Sync background ticker
+	go func() {
+		// Sync initially after startup stabilization
+		time.Sleep(15 * time.Second)
+		if err := w.BroadcastTimeSync(); err != nil {
+			log.Printf("[Auto Time-Sync] Failed on startup: %v", err)
+		}
+
+		ticker := time.NewTicker(6 * time.Hour)
+		defer ticker.Stop()
+		for range ticker.C {
+			if err := w.BroadcastTimeSync(); err != nil {
+				log.Printf("[Auto Time-Sync] Scheduled pass failed: %v", err)
+			}
+		}
+	}()
 
 	if w.port != nil {
 		// If started online, do an initial autodiscover
@@ -481,4 +499,54 @@ func (w *Worker) readLoop() {
 			}
 		}
 	}
+}
+
+// BroadcastTimeSync sends command 0x23 to all active nodes to set their RTC to server time
+func (w *Worker) BroadcastTimeSync() error {
+	w.mu.Lock()
+	port := w.port
+	w.port = nil // Steal port to avoid parsing echoes into events
+	w.mu.Unlock()
+
+	if port == nil {
+		return fmt.Errorf("system is offline")
+	}
+
+	defer func() {
+		w.mu.Lock()
+		w.port = port
+		w.mu.Unlock()
+	}()
+
+	now := time.Now()
+	wk := byte(now.Weekday()) // 0=Sun, 1=Mon..
+	yy := cli.ToBCD(now.Year() % 100)
+	month := cli.ToBCD(int(now.Month()))
+	dd := cli.ToBCD(now.Day())
+	hh := cli.ToBCD(now.Hour())
+	mm := cli.ToBCD(now.Minute())
+	ss := cli.ToBCD(now.Second())
+
+	w.mu.RLock()
+	devices := make([]string, 0, len(w.activeNodes))
+	for id := range w.activeNodes {
+		devices = append(devices, id)
+	}
+	w.mu.RUnlock()
+
+	for _, nodeStr := range devices {
+		var nodeID byte
+		fmt.Sscanf(nodeStr, "%d", &nodeID)
+		
+		cmd := []byte{0x7E, 0x0B, nodeID, 0x23, ss, mm, hh, wk, dd, month, yy}
+		cmd = cli.CalculateChecksum(cmd)
+		port.Write(cmd)
+
+		buf := make([]byte, 128)
+		port.Read(buf) // flush echo
+		time.Sleep(50 * time.Millisecond)
+	}
+	
+	log.Println("[Auto Time-Sync] Broadcasted current server time to all nodes.")
+	return nil
 }

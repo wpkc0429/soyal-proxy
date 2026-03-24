@@ -20,11 +20,20 @@ type AccessLog struct {
 	EventDesc  string
 }
 
+type Group struct {
+	ID          uint   `gorm:"primaryKey"`
+	Name        string `gorm:"uniqueIndex"`
+	Permissions string // JSON encoded map[string]cli.GlobalPermission
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
 type User struct {
 	ID          uint   `gorm:"primaryKey"`
 	CardID      string `gorm:"uniqueIndex"`
 	Notes       string
-	Permissions string // JSON encoded map[string]config.PermissionData
+	GroupIDs    string // JSON encoded []uint for Multiple Groups
+	Permissions string // JSON encoded map[string]cli.GlobalPermission
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 }
@@ -37,7 +46,7 @@ func InitDB(dbPath string, jsonPath string) error {
 		return err
 	}
 
-	err = db.AutoMigrate(&AccessLog{}, &User{})
+	err = db.AutoMigrate(&AccessLog{}, &Group{}, &User{})
 	if err != nil {
 		return err
 	}

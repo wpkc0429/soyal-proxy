@@ -24,7 +24,7 @@ func parseBCD(b byte) int {
 	return int((b>>4)*10 + (b & 0x0F))
 }
 
-func toBCD(val int) byte {
+func ToBCD(val int) byte {
 	return byte(((val / 10) << 4) | (val % 10))
 }
 
@@ -34,7 +34,7 @@ type GlobalUser struct {
 	Permissions map[string]GlobalPermission `json:"permissions"` // Node ID -> Data
 }
 
-func calculateChecksum(cmd []byte) []byte {
+func CalculateChecksum(cmd []byte) []byte {
 	var xor byte = 0xFF
 	for i := 2; i < len(cmd); i++ {
 		xor ^= cmd[i]
@@ -53,7 +53,7 @@ func SyncDownNodePort(port serial.Port, nodeID byte) map[string]GlobalPermission
 
 	for addr := 0; addr < 100; addr += 10 {
 		cmd := []byte{0x7E, 0x07, nodeID, 0x87, byte(addr >> 8), byte(addr & 0xFF), 10}
-		cmd = calculateChecksum(cmd)
+		cmd = CalculateChecksum(cmd)
 		port.Write(cmd)
 
 		buf := make([]byte, 1024)
@@ -76,7 +76,7 @@ func SyncDownNodePort(port serial.Port, nodeID byte) map[string]GlobalPermission
 				byte(floorIndex >> 24), byte(floorIndex >> 16), byte(floorIndex >> 8), byte(floorIndex),
 				byte(floorRecords >> 8), byte(floorRecords),
 			}
-			cmd2F = calculateChecksum(cmd2F)
+			cmd2F = CalculateChecksum(cmd2F)
 			port.Write(cmd2F)
 
 			fbuf := make([]byte, 1024)
@@ -354,9 +354,9 @@ func SyncUpUsersPort(port serial.Port, devices []string, userList []GlobalUser, 
 				if y > 2000 {
 					y -= 2000
 				}
-				recBytes[18] = toBCD(y)
-				recBytes[19] = toBCD(m)
-				recBytes[20] = toBCD(d)
+				recBytes[18] = ToBCD(y)
+				recBytes[19] = ToBCD(m)
+				recBytes[20] = ToBCD(d)
 			} else {
 				recBytes[18] = 0x99 // 2099
 				recBytes[19] = 0x12 // Dec
@@ -390,7 +390,7 @@ func SyncUpUsersPort(port serial.Port, devices []string, userList []GlobalUser, 
 			length := byte(2 + 1 + 1 + 26)
 			cmd := []byte{0x7E, length, nodeID, 0x83, 1}
 			cmd = append(cmd, recBytes...)
-			cmd = calculateChecksum(cmd)
+			cmd = CalculateChecksum(cmd)
 
 			port.Write(cmd)
 			wroteAnything = true
@@ -418,7 +418,7 @@ func SyncUpUsersPort(port serial.Port, devices []string, userList []GlobalUser, 
 					byte(floorRecords >> 8), byte(floorRecords),
 				}
 				cmd2F = append(cmd2F, fBytes...)
-				cmd2F = calculateChecksum(cmd2F)
+				cmd2F = CalculateChecksum(cmd2F)
 				port.Write(cmd2F)
 				port.Read(buf) // flush echo
 				time.Sleep(50 * time.Millisecond)

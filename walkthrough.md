@@ -119,5 +119,21 @@ wsl -e bash -c "cd /var/www/docker/html/go-lang/soyal-proxy && GOOS=windows GOAR
 - `"close_door"`：強制鎖門 (Output 2 OFF)。
 - `"pulse_door"` 或 `"garage_toggle"`：點放 Output 2 繼電器 (Pulse)。適用於單按鍵循環式車庫鐵捲門 (按一下開、再按暫停、再按關)。
 - `"alarm_on"`：觸發警報 (Output 1 ON)。
-- `"alarm_off"`：解除警報 (Output 1 OFF)。
 - `"pulse_alarm"` 或 `"garage_stop"`：點放 Output 1 繼電器 (Pulse)。如果您的鐵捲門有獨立的「暫停鍵」，且接線牽在卡機的警報端上，可用此指令觸發暫停。
+
+## 6. 自動化測試與邊界除錯 (Automated Tests)
+為了確保封包解析 (Logic Parser) 在任何情況下面對雜訊或斷線都能保持高穩定，我們額外實作了 `parser_test.go` 單元測試：
+1. **防呆驗證**：針對 HEX 封包長度不足 27 Bytes，或是 Checksum (XOR/SUM) 計算錯誤的情境，測試會斷言 Parser 能正確丟棄封包並回傳錯誤，保護主程序不崩潰 (`panic: slice bounds out of range`)。
+2. **邊際長度測試**：加入了嚴格的 `6 bytes` 最小邊界測試，以及長度符合但遺失卡號的特殊封包情境測試，確保 `index out of range` 被徹底根除。
+3. **驗證方式**：在專案底下執行 `go test -v -cover ./parser/...` 即可快速確認邏輯正確性與程式碼覆蓋率。
+
+## 7. Web Dashboard UI/UX 質感升級
+為了讓管理結面更現代化並提升使用者體驗，我們針對 `web/index.html` 的前端 Vue + Tailwind 應用進行了以下優化：
+1. **全域字體與色彩**：引入 Google Fonts `Inter`，並深度加強了 Glassmorphism (毛玻璃) 效果與暗色系漸層背景。
+2. **客製化通知組件**：移除了會阻擋 UI 運行的原生 `alert()` 與 `confirm()`，改以 Vue 狀態驅動的現代化 **Toast 通知浮出窗** 與質感 **Confirm Modal 動畫對話框** 取代。
+3. **微動畫與非同步防護**：
+   - 即時事件流與卡片清單導入了 Vue `<transition-group>` 的滑動特效。
+   - 設備連線狀態新增了 `animate-pulse` 脈衝動畫。
+   - 所有向 API 發送儲存或同步的按鈕加入了防連點機制與 `Loading` 旋轉動畫，避免網路延遲時引發誤操作。
+> [!NOTE]
+> 這個升級已實作於 `web/index.html` 內，您可以透過啟動代理程式並使用瀏覽器進入 `http://localhost:8080` 來體驗全新介面！

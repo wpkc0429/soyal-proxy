@@ -10,6 +10,23 @@ import (
 	"soyal-proxy/database"
 )
 
+func unionInts(a, b []int) []int {
+	m := make(map[int]bool)
+	for _, v := range a { m[v] = true }
+	for _, v := range b { m[v] = true }
+	var res []int
+	for k := range m { res = append(res, k) }
+	return res
+}
+
+func highestMode(a, b string) string {
+	val := map[string]int{"": 0, "card": 1, "card_or_pin": 2, "card_and_pin": 3}
+	if val[a] > val[b] {
+		return a
+	}
+	return b
+}
+
 // PerformSyncDownDB fetches all whitelists from connected nodes and writes them to SQLite.
 func (w *Worker) PerformSyncDownDB() error {
 	w.mu.Lock()
@@ -77,14 +94,19 @@ func (w *Worker) PerformSyncDownDB() error {
 
 	// 4. Save back to SQLite safely
 	database.DB.Transaction(func(tx *gorm.DB) error {
-		tx.Exec("DELETE FROM users")
 		for _, u := range globalUsers {
 			permBytes, _ := json.Marshal(u.Permissions)
-			tx.Create(&database.User{
-				CardID:      u.CardID,
-				Notes:       u.Notes,
-				Permissions: string(permBytes),
+			res := tx.Model(&database.User{}).Where("card_id = ?", u.CardID).Updates(map[string]interface{}{
+				"notes":       u.Notes,
+				"permissions": string(permBytes),
 			})
+			if res.RowsAffected == 0 { // New user from hardware
+				tx.Create(&database.User{
+					CardID:      u.CardID,
+					Notes:       u.Notes,
+					Permissions: string(permBytes),
+				})
+			}
 		}
 		return nil
 	})
@@ -119,6 +141,14 @@ func (w *Worker) PerformSyncUpDB() error {
 
 	var dbUsers []database.User
 	database.DB.Find(&dbUsers)
+
+	// Fetch Groups for RBAC Merge
+	var dbGroups []database.Group
+	database.DB.Find(&dbGroups)
+	groupMap := make(map[uint]string) // GroupID to JSON permissions string
+	for _, g := range dbGroups {
+		groupMap[g.ID] = g.Permissions
+	}
 	
 	var userList []cli.GlobalUser
 	for _, du := range dbUsers {
@@ -129,6 +159,46 @@ func (w *Worker) PerformSyncUpDB() error {
 		if perms == nil {
 			perms = make(map[string]cli.GlobalPermission)
 		}
+
+		var gids []uint
+		if du.GroupIDs != "" {
+			json.Unmarshal([]byte(du.GroupIDs), &gids)
+		}
+
+		// 權限繼承 (Multi-Group Union Merge)
+		for _, gid := range gids {
+			if groupPermsJSON, ok := groupMap[gid]; ok && groupPermsJSON != "" {
+				var groupPerms map[string]cli.GlobalPermission
+				json.Unmarshal([]byte(groupPermsJSON), &groupPerms)
+				
+				for nodeStr, gp := range groupPerms {
+					if up, exists := perms[nodeStr]; !exists {
+						perms[nodeStr] = gp
+					} else {
+						// Merge logic!
+						if len(up.Doors) > 0 && len(gp.Doors) > 0 {
+							up.Doors = unionInts(up.Doors, gp.Doors)
+						} else {
+							up.Doors = []int{} // One of them allows ALL doors
+						}
+						if len(up.Floors) > 0 && len(gp.Floors) > 0 {
+							up.Floors = unionInts(up.Floors, gp.Floors)
+						} else {
+							up.Floors = []int{}
+						}
+						up.Mode = highestMode(up.Mode, gp.Mode)
+						if up.Expiry == "" {
+							up.Expiry = gp.Expiry
+						}
+						if up.Zone == nil && gp.Zone != nil {
+							up.Zone = gp.Zone
+						}
+						perms[nodeStr] = up
+					}
+				}
+			}
+		}
+
 		userList = append(userList, cli.GlobalUser{
 			CardID:      du.CardID,
 			Notes:       du.Notes,
@@ -142,16 +212,11 @@ func (w *Worker) PerformSyncUpDB() error {
 		return err
 	}
 
-	// Save auto-assigned addresses back to SQLite
+	// Save auto-assigned addresses back to SQLite safely without losing GroupIDs
 	database.DB.Transaction(func(tx *gorm.DB) error {
-		tx.Exec("DELETE FROM users")
 		for _, u := range updatedUsers {
 			permBytes, _ := json.Marshal(u.Permissions)
-			tx.Create(&database.User{
-				CardID:      u.CardID,
-				Notes:       u.Notes,
-				Permissions: string(permBytes),
-			})
+			tx.Model(&database.User{}).Where("card_id = ?", u.CardID).Update("permissions", string(permBytes))
 		}
 		return nil
 	})
